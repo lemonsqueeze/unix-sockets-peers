@@ -1,0 +1,141 @@
+#!/usr/bin/perl
+
+sub usage
+{    
+    print "Usage: socket_peer  socket_inode\n";
+    print "Find pid of process connected to unix socket with inode socket_inode.\n";
+    exit 1;
+}
+
+my $debug = 1;
+
+#######################################################################
+# Use lsof to map pids/sockets/kernel addresses
+
+my %inode_to_pid;
+my %pid_to_name;
+my %address_to_inode;
+my %inode_to_address;
+
+sub init_lsof
+{
+    my @lsof = split('\n', `lsof -U +c 0  2>/dev/null`);
+    @lsof = splice(@lsof, 1);   # remove header
+    
+    # COMMAND    PID       USER   FD   TYPE     DEVICE SIZE/OFF  NODE NAME
+    # Xorg       982       root   31u  unix 0xed0b4400      0t0  6820 /tmp/.X11-unix/X0
+    foreach my $str (@lsof)
+    {
+	$str =~ s/  */ /g;
+	my ($name, $pid, $_, $_, $_, $address, $_, $inode) = split(' ', $str);
+	
+	$inode_to_pid{$inode} = $pid;
+	$pid_to_name{$pid} = $name;	
+	$address_to_inode{$address} = $inode;
+	$inode_to_address{$inode} = $address;
+	if ($debug) { print "inode $inode -> address $address ($pid $name)\n"; }
+    }
+}
+
+
+#######################################################################
+
+# hack: look for a process owning inode+1 or inode-1
+# works most of the time
+sub find_peer_pid_hack
+{
+    my ($inode) = @_;
+    if ($debug) { print "find_peer_pid_hack($inode)\n"; }    
+    foreach my $pid ($inode_to_pid{$inode + 1}, $inode_to_pid{$inode - 1})
+    {
+	if ($pid && $pid ne $pid_x)
+	{    return $pid;   }
+    }
+    return "";
+}
+
+
+#######################################################################
+# lsof -U + gdb way
+
+my $vmlinux = "/usr/src/linux/vmlinux";
+
+# slow but sure way, use kernel address reported by lsof and use gdb to get peer address
+# needs kernel with debugging symbols (vmlinux)
+# this should never fail
+sub find_peer_pid_gdb
+{ 
+    my ($inode) = @_;
+    if ($debug) { print "find_peer_pid_gdb($inode)\n"; }    
+    -f "$vmlinux" || die "couldn't find vmlinux at $vmlinux\n";
+
+    my $address = $inode_to_address{$inode};
+    if ($debug) { print "running gdb ...\n"; }    
+    my $gdb_cmd="p ((struct unix_sock*)$address)->peer\n";
+    `echo "$gdb_cmd" > /tmp/gdb_cmd `;
+    
+    my $gdb = `gdb $vmlinux /proc/kcore  --batch -x /tmp/gdb_cmd`;
+    # something like: $1 = (struct sock *) 0xed289000
+    if ($gdb =~ m|\(struct sock \*\) (0x[0-9a-f]*)|)
+    { 
+	my $peer_address = $1;
+	my $peer_inode = $address_to_inode{$peer_address} || die "couldn't map address to inode (bug?)";
+	my $pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid (bug?)";
+	if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
+	return $pid;
+    }
+    die "failed to parse gdb output (bug?)";
+}
+
+# hack, find the right offset, then you don't need debugging symbols !
+sub find_peer_pid_gdb_hack
+{ 
+    my ($inode) = @_;
+    if ($debug) { print "find_peer_pid_gdb_hack($inode)\n"; }    
+
+    my $address = $inode_to_address{$inode};
+    if ($debug) { print "running gdb ...\n"; }
+    my $gdb_cmd="p ((void **)$address)[104]\n";
+    `echo "$gdb_cmd" > /tmp/gdb_cmd `;
+    
+    my $gdb = `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`;
+    #  $1 = (void *) 0xed289000
+    if ($gdb =~ m|\(void \*\) (0x[0-9a-f]*)|)
+    { 
+	my $peer_address = $1;
+	my $peer_inode = $address_to_inode{$peer_address} || 
+	    die "couldn't map address to inode.\nhardcoded offset in gdb command is wrong, fixme !";
+	my $pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid (bug?)";
+	if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
+	return $pid;
+    }
+    die "failed to parse gdb output (bug?)";
+}
+
+
+
+#######################################################################
+
+sub find_peer_pid
+{
+    my $pid = find_peer_pid_hack @_;       return $pid if ($pid);
+    my $pid = find_peer_pid_gdb_hack @_;   return $pid if ($pid);
+    my $pid = find_peer_pid_gdb @_;        return $pid if ($pid);
+}
+
+
+#######################################################################
+
+my $inode = @ARGV[0];
+if (!($inode =~ m|[0-9]+|))
+{  usage();  }
+
+init_lsof();
+if (!$inode_to_pid{$inode})
+{  die("$inode: No process owns this socket. bad number ?\n"); }
+
+my $pid = find_peer_pid($inode);
+if ($pid)
+{   print "$pid $pid_to_name{$pid}\n";   exit 0;  }
+
+die "couldn't find peer process for unix socket $inode\n";

@@ -27,9 +27,9 @@ What is this Xorg socket connected to ??
     # ./socket_peer 6825
     1497 compiz
 
-Even better, get info for all processes at once. This one adds an extra column to netstat's output:
+Or get info for all processes at once. This one adds an extra column to netstat's output:
 
-    # ./socket_peers
+    # ./netstat_unix
     Proto RefCnt Flags       Type       State         I-Node   PID/Program name     Peer PID/Program name  Path
     unix  3      [ ]         STREAM     CONNECTED     6825     982/Xreal            1497/compiz            /tmp/.X11-unix/X0
     unix  3      [ ]         STREAM     CONNECTED     6824     1497/compiz          982/Xreal                 
@@ -40,3 +40,10 @@ Do without kernel debug symbols
 --------------------------------
 
 Run find_gdb_offset script to find the right offset to use on your system, fix the scripts and you're good to go.
+
+TODO
+----
+
+- Find a way without using gdb.
+
+ 

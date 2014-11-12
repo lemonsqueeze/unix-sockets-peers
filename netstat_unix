@@ -24,6 +24,7 @@ sub usage
 }
 
 #my $debug = 1;
+my $paranoid_checks = 1;	# double check everything (very slow)
 
 #######################################################################
 # Use lsof to map pids/sockets/kernel addresses
@@ -60,9 +61,10 @@ sub find_peer_pid_hack
 {
     my ($inode) = @_;
     if ($debug) { print "find_peer_pid_hack($inode)\n"; }    
-    foreach my $pid ($inode_to_pid{$inode + 1}, $inode_to_pid{$inode - 1})
-    {   $pid && return $pid;   }
-    return "";
+    if ($inode_to_pid{$inode+1} && $inode_to_pid{$inode-1})  # don't know which one
+    {   return;  }
+    foreach my $inode ($inode + 1, $inode - 1)
+    {   $inode_to_pid{$inode} && return ($inode_to_pid{$inode}, $inode);   }
 }
 
 
@@ -93,7 +95,7 @@ sub find_peer_pid_gdb
 	my $peer_inode = $address_to_inode{$peer_address} || die "couldn't map address to inode (bug?)";
 	my $pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid (bug?)";
 	if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
-	return $pid;
+	return ($pid, $peer_inode);
     }
     die "failed to parse gdb output (bug?)";
 }
@@ -120,7 +122,7 @@ sub find_peer_pid_gdb_hack
 	    die "couldn't map address to inode.\nhardcoded gdb offset is wrong, run find_gdb_offset and fix it !";
 	my $pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid (bug?)";
 	if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
-	return $pid;
+	return ($pid, $peer_inode);
     }
     die "failed to parse gdb output (bug?)";
 }
@@ -129,15 +131,32 @@ sub find_peer_pid_gdb_hack
 
 #######################################################################
 
+sub find_peer_pid_paranoid
+{
+    my ($inode) = @_;
+    my ($peer_pid, $peer_inode) = find_peer_pid_hack @_;
+    my ($peer_pid2, $peer_inode2) = find_peer_pid_gdb_hack @_;
+
+    if ($peer_pid && ($peer_pid != $peer_pid2 || $peer_inode != $peer_inode2))
+    {   die "inode $inode: hack and gdb methods disagree !\n" . 
+	    "($peer_pid, $peer_inode) vs ($peer_pid2, $peer_inode2)";  }
+    
+    my ($pp_pid, $pp_inode) = find_peer_pid_gdb_hack($peer_inode2);
+    ($pp_inode == $inode) || die "inode $inode: peer's peer != original !";
+    return ($peer_pid2, $peer_inode2);
+}
+
 sub find_peer_pid
 {
     my ($inode) = @_;
     $inode_to_pid{$inode} || die("$inode: No process owns this socket. bad number ?\n");
-
-    my $pid = find_peer_pid_hack @_;       return $pid if ($pid);
-    my $pid = find_peer_pid_gdb_hack @_;   return $pid if ($pid);
-    my $pid = find_peer_pid_gdb @_;        return $pid if ($pid);
+    $paranoid_checks && return find_peer_pid_paranoid @_;
+    
+    my ($pid) = find_peer_pid_hack @_;       return $pid if ($pid);
+    my ($pid) = find_peer_pid_gdb_hack @_;   return $pid if ($pid);
+    my ($pid) = find_peer_pid_gdb @_;        return $pid if ($pid);	
 }
+
 
 #######################################################################
 
@@ -189,7 +208,7 @@ sub show_netstat
 	my $tmp = $str;   $tmp =~ s/  */ /g;
 	my ($_, $_, $_, $_, $_, $_, $inode) = split(' ', $tmp);
 	
-	my $pid = find_peer_pid($inode);
+	my ($pid) = find_peer_pid($inode);
 	my $name = $pid_to_name{$pid};
 	$pid || die "couldn't find peer pid for socket $inode. That's a bug.";
 	$str = insert_column($str, "$pid/$name", $pos);
@@ -199,6 +218,8 @@ sub show_netstat
 
 
 #######################################################################
+
+$paranoid_checks && print "warning: running in paranoid mode\n";
 
 init_lsof();
 init_netstat();

@@ -1,5 +1,7 @@
 #!/usr/bin/perl
 
+# FIXME: get proc names from netstat for consistency
+
 sub usage
 {    
     print "Usage: socket_peer  socket_inode\n";
@@ -7,7 +9,7 @@ sub usage
     exit 1;
 }
 
-my $debug = 1;
+#my $debug = 1;
 
 #######################################################################
 # Use lsof to map pids/sockets/kernel addresses
@@ -126,14 +128,53 @@ sub find_peer_pid
     my $pid = find_peer_pid_gdb @_;        return $pid if ($pid);
 }
 
+#######################################################################
+
+# insert new column $str in $line at position $pos
+sub insert_column
+{
+    my ($line, $str, $pos) = @_;
+    return sprintf("%s %-25s %s", substr($line, 0, $pos), $str, substr($line, $pos));
+}
+
+# Proto RefCnt Flags       Type       State         I-Node   PID/Program name    Path
+# unix  3      [ ]         STREAM     CONNECTED     4229     839/avahi-daemon: r
+sub show_netstat
+{
+    my @netstat = split('\n', `netstat -na --unix -p`);
+
+    # add column before "Path"
+    my $header = $netstat[1];
+    my $pos = index($header, "Path");
+    ($pos != -1) || die("error parsing netstat header");
+
+    foreach my $str (@netstat)
+    {
+	if ($str eq $header) 
+	{  $str = insert_column($str, "Peer PID/Program name", $pos); print "$str\n";  next;   }
+	if (!($str =~ m/ CONNECTED /))
+	{  $str = insert_column($str, "", $pos); print "$str\n";  next;   }
+
+	my $tmp = $str;
+	$tmp =~ s/  */ /g;
+	my ($_, $_, $_, $_, $_, $_, $inode, $pn) = split(' ', $tmp);
+#	my ($pid, $name) = split('/', $pn);
+	
+	my $pid = find_peer_pid($inode);
+	my $name = $pid_to_name{$pid};
+	$pid || die "couldn't find peer pid for socket $inode";
+	$str = insert_column($str, "$pid/$name", $pos);
+	print "$str\n";
+    }
+}
+
 
 #######################################################################
 
-my $inode = @ARGV[0];
-if (!($inode =~ m|[0-9]+|))
-{  usage();  }
-
 init_lsof();
+show_netstat();
+exit 0;
+
 my $pid = find_peer_pid($inode);
 if ($pid)
 {   print "$pid $pid_to_name{$pid}\n";   exit 0;  }

@@ -1,13 +1,6 @@
 #!/usr/bin/perl
 #
-# How this works:
-#
-# To find socket peer:
-#    http://stackoverflow.com/questions/11897662/identify-other-end-of-a-unix-domain-socket-connection
-# 1) try quick hack first: check inode+1 and inode-1   (need only netstat/lsof output for that)
-# 2) if that fails, use kernel address from lsof, and get peer address from kernel with gdb
-#
-# then parse netstat output and add extra column.
+# FIXME: can't rely on inode+1 / inode-1 hack
 #
 
 sub usage

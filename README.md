@@ -2,11 +2,16 @@
 Unix Sockets Peers
 ==================
 
-Implement ideas from:
-  http://stackoverflow.com/questions/11897662/identify-other-end-of-a-unix-domain-socket-connection
-to find which process is connected to a given unix socket.
+Find which process is connected to a given unix socket:
 
-This should always work: when `inode+1/-1` hack doesn't work, address is read from kernel memory.
+http://stackoverflow.com/questions/11897662/identify-other-end-of-a-unix-domain-socket-connection
+
+Note: can't use the inode +1/-1 hack:  
+- sometimes it fails, which is fine (can use other method then)
+- when it succeeds it works most of the time but there are cases where it'll yield wrong socket.
+  -> no way to rely on it.
+
+So use kernel address from lsof output, and get peer address from kernel with gdb.
 
 Needed: perl, gdb, and decent netstat and lsof.  
 You must be root.  
@@ -45,5 +50,3 @@ TODO
 ----
 
 - Find a way without using gdb.
-
- 

@@ -1,11 +1,25 @@
 #!/usr/bin/perl
+#
+# How this works:
+#
+# To find socket peer:
+#    http://stackoverflow.com/questions/11897662/identify-other-end-of-a-unix-domain-socket-connection
+# 1) try quick hack: check inode+1 and inode-1   (need only netstat/lsof output for that)
+# 2) if that fails, use kernel address from lsof, and get peer address from kernel with gdb
+#
+# then parse netstat output and add extra column.
+#
 
-# FIXME: get proc names from netstat for consistency
+# TODO: 
+# - autodetect gdb offset ?
+# - read kernel mem without gdb ?
+
 
 sub usage
 {    
-    print "Usage: socket_peer  socket_inode\n";
-    print "Find pid of process connected to unix socket with inode socket_inode.\n";
+    print "Usage: socket_peers\n";
+    print "Display which processes unix sockets are connected to.\n";
+    print "Output is same as 'netstat -na --unix -p' with an extra column showing peer pid/process name.\n";
     exit 1;
 }
 
@@ -15,7 +29,6 @@ sub usage
 # Use lsof to map pids/sockets/kernel addresses
 
 my %inode_to_pid;
-my %pid_to_name;
 my %address_to_inode;
 my %inode_to_address;
 
@@ -32,7 +45,6 @@ sub init_lsof
 	my ($name, $pid, $_, $_, $_, $address, $_, $inode) = split(' ', $str);
 	
 	$inode_to_pid{$inode} = $pid;
-	$pid_to_name{$pid} = $name;	
 	$address_to_inode{$address} = $inode;
 	$inode_to_address{$inode} = $address;
 	if ($debug) { print "inode $inode -> address $address ($pid $name)\n"; }
@@ -49,10 +61,7 @@ sub find_peer_pid_hack
     my ($inode) = @_;
     if ($debug) { print "find_peer_pid_hack($inode)\n"; }    
     foreach my $pid ($inode_to_pid{$inode + 1}, $inode_to_pid{$inode - 1})
-    {
-	if ($pid && $pid ne $pid_x)
-	{    return $pid;   }
-    }
+    {   $pid && return $pid;   }
     return "";
 }
 
@@ -137,16 +146,36 @@ sub insert_column
     return sprintf("%s %-25s %s", substr($line, 0, $pos), $str, substr($line, $pos));
 }
 
+my %pid_to_name;
+my @netstat;
+
+# Use netstat output to resolve process names, lsof reports them differently.
+#
 # Proto RefCnt Flags       Type       State         I-Node   PID/Program name    Path
 # unix  3      [ ]         STREAM     CONNECTED     4229     839/avahi-daemon: r
+sub init_netstat
+{
+    @netstat = split('\n', `netstat -na --unix -p`);
+    
+    foreach my $str (@netstat)
+    {
+	next if (!($str =~ m/ CONNECTED /));
+
+	my $tmp = $str;   $tmp =~ s/  */ /g;
+	my ($_, $_, $_, $_, $_, $_, $inode, $pn) = split(' ', $tmp);
+	my ($pid, $name) = split('/', $pn);
+	$pid_to_name{$pid} = $name;
+    }
+}
+
+
+# Add extra column to netstat output
 sub show_netstat
 {
-    my @netstat = split('\n', `netstat -na --unix -p`);
-
     # add column before "Path"
     my $header = $netstat[1];
     my $pos = index($header, "Path");
-    ($pos != -1) || die("error parsing netstat header");
+    ($pos != -1) || die("error parsing netstat header.");
 
     foreach my $str (@netstat)
     {
@@ -155,14 +184,12 @@ sub show_netstat
 	if (!($str =~ m/ CONNECTED /))
 	{  $str = insert_column($str, "", $pos); print "$str\n";  next;   }
 
-	my $tmp = $str;
-	$tmp =~ s/  */ /g;
-	my ($_, $_, $_, $_, $_, $_, $inode, $pn) = split(' ', $tmp);
-#	my ($pid, $name) = split('/', $pn);
+	my $tmp = $str;   $tmp =~ s/  */ /g;
+	my ($_, $_, $_, $_, $_, $_, $inode) = split(' ', $tmp);
 	
 	my $pid = find_peer_pid($inode);
 	my $name = $pid_to_name{$pid};
-	$pid || die "couldn't find peer pid for socket $inode";
+	$pid || die "couldn't find peer pid for socket $inode. That's a bug.";
 	$str = insert_column($str, "$pid/$name", $pos);
 	print "$str\n";
     }
@@ -172,11 +199,6 @@ sub show_netstat
 #######################################################################
 
 init_lsof();
+init_netstat();
 show_netstat();
-exit 0;
 
-my $pid = find_peer_pid($inode);
-if ($pid)
-{   print "$pid $pid_to_name{$pid}\n";   exit 0;  }
-
-die "couldn't find peer process for unix socket $inode\n";

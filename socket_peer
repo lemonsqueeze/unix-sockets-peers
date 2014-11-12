@@ -7,7 +7,7 @@ sub usage
     exit 1;
 }
 
-my $debug = 1;
+#my $debug = 1;
 
 #######################################################################
 # Use lsof to map pids/sockets/kernel addresses
@@ -47,10 +47,7 @@ sub find_peer_pid_hack
     my ($inode) = @_;
     if ($debug) { print "find_peer_pid_hack($inode)\n"; }    
     foreach my $pid ($inode_to_pid{$inode + 1}, $inode_to_pid{$inode - 1})
-    {
-	if ($pid && $pid ne $pid_x)
-	{    return $pid;   }
-    }
+    {  $pid && return $pid;  }
     return "";
 }
 

@@ -1,0 +1,103 @@
+#!/usr/bin/perl
+
+sub usage
+{    
+    print "Usage: find_gdb_offset  socket_inode\n";
+    print "Attempt to find offset to use gdb without debug symbols, without debug symbols =)\n";
+    exit 1;
+}
+
+print "Note: If you have the kernel's debug symbols you don't need this. Just run:\n";
+print "  # gdb /usr/src/linux/vmlinux /proc/kcore\n";
+print "  (gdb) print   (int*)(&((struct unix_sock*)0x0)->peer) - (int*)(0x0)\n";
+print "to find the right offset.\n\n";
+
+#my $debug = 1;
+
+#######################################################################
+# Use lsof to map pids/sockets/kernel addresses
+
+my %inode_to_pid;
+my %pid_to_name;
+my %address_to_inode;
+my %inode_to_address;
+
+sub init_lsof
+{
+    my @lsof = split('\n', `lsof -U +c 0  2>/dev/null`);
+    @lsof = splice(@lsof, 1);   # remove header
+    
+    # COMMAND    PID       USER   FD   TYPE     DEVICE SIZE/OFF  NODE NAME
+    # Xorg       982       root   31u  unix 0xed0b4400      0t0  6820 /tmp/.X11-unix/X0
+    foreach my $str (@lsof)
+    {
+	$str =~ s/  */ /g;
+	my ($name, $pid, $_, $_, $_, $address, $_, $inode) = split(' ', $str);
+	
+	$inode_to_pid{$inode} = $pid;
+	$pid_to_name{$pid} = $name;	
+	$address_to_inode{$address} = $inode;
+	$inode_to_address{$inode} = $address;
+	if ($debug) { print "inode $inode -> address $address ($pid $name)\n"; }
+    }
+}
+
+
+#######################################################################
+
+# hack: look for a process owning inode+1 or inode-1
+# works most of the time
+sub find_peer_pid_hack
+{
+    my ($inode) = @_;
+    if ($debug) { print "find_peer_pid_hack($inode)\n"; }    
+    foreach my $pid ($inode_to_pid{$inode + 1}, $inode_to_pid{$inode - 1})
+    {  $pid && return $pid;  }
+    return "";
+}
+
+
+#######################################################################
+
+sub find_gdb_offset
+{ 
+    my ($inode) = @_;
+
+    my $address = $inode_to_address{$inode};
+    if ($debug) { print "running gdb ...\n"; }
+    my $gdb_cmd="";
+    for (my $i = 5; $i < 200; $i++)
+    {   $gdb_cmd .= "p ((void **)$address)[$i]\n";   }
+    `echo "$gdb_cmd" > /tmp/gdb_cmd `;
+    
+    my @gdb = split('\n', `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`);
+    #  $1 = (void *) 0xed289000
+    my $i = 4;
+    foreach my $str (@gdb)
+    {
+#	print "$str\n";
+	if ($str =~ m|\(void \*\) (0x[0-9a-f]*)|)
+	{ 
+	    $i++;
+	    my $peer_address = $1;
+	    my $peer_inode = $address_to_inode{$peer_address} || next;
+#	    print "kernel $peer_address -> inode $peer_inode\n";
+	    print "Offset found, now change hardcoded values in the scripts to:\n";
+	    print "  my \$struct_unix_sock__peer_offset=$i;\n";
+	    exit 0;
+	}
+    }
+}
+
+
+#######################################################################
+
+my $inode = @ARGV[0];
+if (!($inode =~ m|[0-9]+|))
+{  usage();  }
+
+init_lsof();
+$inode_to_pid{$inode} || die("$inode: No process owns this socket. bad number ?\n");
+
+find_gdb_offset($inode);
+

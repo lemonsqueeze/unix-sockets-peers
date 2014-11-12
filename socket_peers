@@ -4,7 +4,7 @@
 #
 # To find socket peer:
 #    http://stackoverflow.com/questions/11897662/identify-other-end-of-a-unix-domain-socket-connection
-# 1) try quick hack: check inode+1 and inode-1   (need only netstat/lsof output for that)
+# 1) try quick hack first: check inode+1 and inode-1   (need only netstat/lsof output for that)
 # 2) if that fails, use kernel address from lsof, and get peer address from kernel with gdb
 #
 # then parse netstat output and add extra column.
@@ -71,9 +71,9 @@ sub find_peer_pid_hack
 
 my $vmlinux = "/usr/src/linux/vmlinux";
 
-# slow but sure way, use kernel address reported by lsof and use gdb to get peer address
-# needs kernel with debugging symbols (vmlinux)
-# this should never fail
+# Super slow but sure way, if you have the kernel's debug symbols (vmlinux):
+# Use kernel address reported by lsof then use gdb to get peer address
+# This one should never fail.
 sub find_peer_pid_gdb
 { 
     my ($inode) = @_;
@@ -98,7 +98,9 @@ sub find_peer_pid_gdb
     die "failed to parse gdb output (bug?)";
 }
 
-# hack, find the right offset, then you don't need debugging symbols !
+# Hack, find the right offset, then you don't need debugging symbols !
+# (see find_gdb_offset script)
+my $struct_unix_sock__peer_offset=104;
 sub find_peer_pid_gdb_hack
 { 
     my ($inode) = @_;
@@ -106,7 +108,7 @@ sub find_peer_pid_gdb_hack
 
     my $address = $inode_to_address{$inode};
     if ($debug) { print "running gdb ...\n"; }
-    my $gdb_cmd="p ((void **)$address)[104]\n";
+    my $gdb_cmd="p ((void **)$address)[$struct_unix_sock__peer_offset]\n";
     `echo "$gdb_cmd" > /tmp/gdb_cmd `;
     
     my $gdb = `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`;
@@ -115,7 +117,7 @@ sub find_peer_pid_gdb_hack
     { 
 	my $peer_address = $1;
 	my $peer_inode = $address_to_inode{$peer_address} || 
-	    die "couldn't map address to inode.\nhardcoded offset in gdb command is wrong, fixme !";
+	    die "couldn't map address to inode.\nhardcoded gdb offset is wrong, run find_gdb_offset and fix it !";
 	my $pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid (bug?)";
 	if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
 	return $pid;

@@ -4,6 +4,8 @@
 #
 # Run find_gdb_offset script to find $struct_unix_sock__peer_offset value.
 
+use File::Temp qw/ tempfile /;
+
 sub usage
 {    
     print "Find pid of process connected to unix socket with inode socket_inode.\n";
@@ -51,8 +53,9 @@ sub get_address_gdb_debug_symbols
 { 
     my ($address) = @_;
     my $gdb_cmd="p (void *)((struct unix_sock*)$address)->peer\n";
-    `echo "$gdb_cmd" > /tmp/gdb_cmd `;    
-    return `gdb $vmlinux /proc/kcore  --batch -x /tmp/gdb_cmd`;
+    my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
+    print $fh $gdb_cmd;   close($fh);
+    return `gdb $vmlinux /proc/kcore  --batch -x $temp_file`;
 }
 
 # Hack, find the right offset, then you don't need debugging symbols !
@@ -62,8 +65,9 @@ sub get_address_gdb_no_symbols
 { 
     my ($address) = @_;
     my $gdb_cmd="p ((void **)$address)[$struct_unix_sock__peer_offset]\n";
-    `echo "$gdb_cmd" > /tmp/gdb_cmd `;    
-    return `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`;
+    my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
+    print $fh $gdb_cmd;   close($fh);
+    return `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null`;
 }
 
 sub find_peer_inode

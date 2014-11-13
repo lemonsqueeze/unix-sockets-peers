@@ -1,5 +1,7 @@
 #!/usr/bin/perl
 
+use File::Temp qw/ tempfile /;
+
 sub usage
 {    
     print "Usage: find_gdb_offset  socket_inode\n";
@@ -32,7 +34,7 @@ sub init_lsof
     foreach my $str (@lsof)
     {
 	$str =~ s/  */ /g;
-	my ($name, $pid, $_, $_, $_, $address, $_, $inode) = split(' ', $str);
+	my ($name, $pid, $z, $z, $z, $address, $z, $inode) = split(' ', $str);
 	
 	$inode_to_pid{$inode} = $pid;
 	$pid_to_name{$pid} = $name;	
@@ -54,9 +56,10 @@ sub find_gdb_offset
     my $gdb_cmd="";
     for (my $i = 5; $i < 200; $i++)
     {   $gdb_cmd .= "p ((void **)$address)[$i]\n";   }
-    `echo "$gdb_cmd" > /tmp/gdb_cmd `;
+    my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
+    print $fh $gdb_cmd;   close($fh);
     
-    my @gdb = split('\n', `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`);
+    my @gdb = split('\n', `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null`);
     #  $1 = (void *) 0xed289000
     my $i = 4;
     foreach my $str (@gdb)

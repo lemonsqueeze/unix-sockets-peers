@@ -2,7 +2,8 @@
 Unix Sockets Peers
 ==================
 
-Find which process is connected to a given unix socket.
+Find out which process is connected to a given unix socket.  
+For now the kernel doesn't expose it so this is needed.
 
 Needed
 ------
@@ -30,8 +31,12 @@ Or get info for all processes at once. This one adds an extra column to netstat'
 
     # ./netstat_unix
     Proto RefCnt Flags       Type       State         I-Node   PID/Program name     Peer PID/Program name  Path
-    unix  3      [ ]         STREAM     CONNECTED     6825     982/Xreal            1497/compiz            /tmp/.X11-unix/X0
-    unix  3      [ ]         STREAM     CONNECTED     6824     1497/compiz          982/Xreal                 
+    unix  3      [ ]         STREAM     CONNECTED     6825     982/Xorg             1497/compiz            /tmp/.X11-unix/X0
+    unix  3      [ ]         STREAM     CONNECTED     6824     1497/compiz          982/Xorg                 
+    unix  3      [ ]         SEQPACKET  CONNECTED     207142   3770/chromium-brows  17783/UMA-Session-R       
+    unix  3      [ ]         STREAM     CONNECTED     204903   1523/pulseaudio      3703/thunderbird       
+    unix  3      [ ]         STREAM     CONNECTED     204902   3703/thunderbird     1523/pulseaudio           
+    unix  3      [ ]         STREAM     CONNECTED     204666   1523/pulseaudio      3703/thunderbird       
     ...
 
 

@@ -15,6 +15,8 @@
 #
 # Run find_gdb_offset script to find $struct_unix_sock__peer_offset value.
 
+use File::Temp qw/ tempfile /;
+
 sub usage
 {    
     print "Usage: netstat_unix\n";
@@ -64,8 +66,9 @@ sub get_addresses_gdb_debug_symbols
 	my $address = $inode_to_address{$inode} || die "$inode: couldn't map inode to address";
 	$gdb_cmd .= "p (void*)((struct unix_sock*)$address)->peer\n";	# void* cast to make parsing easier
     }
-    `echo "$gdb_cmd" > /tmp/gdb_cmd `;
-    return split('\n', `gdb $vmlinux /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`);
+    my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
+    print $fh $gdb_cmd;   close($fh);
+    return split('\n', `gdb $vmlinux /proc/kcore  --batch -x $temp_file 2>/dev/null`);
 }
 
 # Hack: find the right offset, then you don't need debugging symbols !
@@ -79,8 +82,9 @@ sub get_addresses_gdb_no_symbols
 	my $address = $inode_to_address{$inode} || die "$inode: couldn't map inode to address";
 	$gdb_cmd .= "p ((void **)$address)[$struct_unix_sock__peer_offset]\n"; 
     }
-    `echo "$gdb_cmd" > /tmp/gdb_cmd `;
-    return split('\n', `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`);
+    my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
+    print $fh $gdb_cmd;   close($fh);
+    return split('\n', `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null`);
 }
 
 my %peer_inodes;	# maps inodes to peer inodes

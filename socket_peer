@@ -1,16 +1,18 @@
 #!/usr/bin/perl
+# socket_peer
+# https://github.com/lemonsqueeze/unix_sockets_peers
 #
-# FIXME: can't rely on inode+1 / inode-1 hack
-#
+# Run find_gdb_offset script to find $struct_unix_sock__peer_offset value.
 
 sub usage
 {    
-    print "Usage: socket_peer  socket_inode\n";
     print "Find pid of process connected to unix socket with inode socket_inode.\n";
+    print "Usage: socket_peer  socket_inode\n";
     exit 1;
 }
 
 #my $debug = 1;
+#my $use_kernel_debug_symbols = 1;	# slooow
 
 #######################################################################
 # Use lsof to map pids/sockets/kernel addresses
@@ -30,7 +32,7 @@ sub init_lsof
     foreach my $str (@lsof)
     {
 	$str =~ s/  */ /g;
-	my ($name, $pid, $_, $_, $_, $address, $_, $inode) = split(' ', $str);
+	my ($name, $pid, $z, $z, $z, $address, $z, $inode) = split(' ', $str);
 	
 	$inode_to_pid{$inode} = $pid;
 	$pid_to_name{$pid} = $name;	
@@ -40,80 +42,48 @@ sub init_lsof
     }
 }
 
-
-#######################################################################
-
-# hack: look for a process owning inode+1 or inode-1
-# works most of the time
-sub find_peer_pid_hack
-{
-    my ($inode) = @_;
-    if ($debug) { print "find_peer_pid_hack($inode)\n"; }    
-    foreach my $pid ($inode_to_pid{$inode + 1}, $inode_to_pid{$inode - 1})
-    {  $pid && return $pid;  }
-    return "";
-}
-
-
 #######################################################################
 # lsof -U + gdb way
 
+# Slow but sure way, if you have the kernel's debug symbols (vmlinux)
 my $vmlinux = "/usr/src/linux/vmlinux";
-
-# Super slow but sure way, if you have the kernel's debug symbols (vmlinux):
-# Use kernel address reported by lsof then use gdb to get peer address
-# This one should never fail.
-sub find_peer_pid_gdb
+sub get_address_gdb_debug_symbols
 { 
-    my ($inode) = @_;
-    if ($debug) { print "find_peer_pid_gdb($inode)\n"; }    
-    -f "$vmlinux" || die "couldn't find vmlinux at $vmlinux\n";
-
-    my $address = $inode_to_address{$inode};
-    if ($debug) { print "running gdb ...\n"; }    
-    my $gdb_cmd="p ((struct unix_sock*)$address)->peer\n";
-    `echo "$gdb_cmd" > /tmp/gdb_cmd `;
-    
-    my $gdb = `gdb $vmlinux /proc/kcore  --batch -x /tmp/gdb_cmd`;
-    # something like: $1 = (struct sock *) 0xed289000
-    if ($gdb =~ m|\(struct sock \*\) (0x[0-9a-f]*)|)
-    { 
-	my $peer_address = $1;
-	my $peer_inode = $address_to_inode{$peer_address} || die "couldn't map address to inode (bug?)";
-	my $pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid (bug?)";
-	if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
-	return $pid;
-    }
-    die "failed to parse gdb output (bug?)";
+    my ($address) = @_;
+    my $gdb_cmd="p (void *)((struct unix_sock*)$address)->peer\n";
+    `echo "$gdb_cmd" > /tmp/gdb_cmd `;    
+    return `gdb $vmlinux /proc/kcore  --batch -x /tmp/gdb_cmd`;
 }
 
 # Hack, find the right offset, then you don't need debugging symbols !
 # (see find_gdb_offset script)
 my $struct_unix_sock__peer_offset = 104;
-sub find_peer_pid_gdb_hack
+sub get_address_gdb_no_symbols
 { 
-    my ($inode) = @_;
-    if ($debug) { print "find_peer_pid_gdb_hack($inode)\n"; }    
-
-    my $address = $inode_to_address{$inode};
-    if ($debug) { print "running gdb ...\n"; }
+    my ($address) = @_;
     my $gdb_cmd="p ((void **)$address)[$struct_unix_sock__peer_offset]\n";
-    `echo "$gdb_cmd" > /tmp/gdb_cmd `;
+    `echo "$gdb_cmd" > /tmp/gdb_cmd `;    
+    return `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`;
+}
+
+sub find_peer_inode
+{
+    my ($inode) = @_;
+    if ($debug) { print "running gdb ...\n"; }
+    my $address = $inode_to_address{$inode} || die "$inode: couldn't map inode to address";
+    my $gdb = ($use_kernel_debug_symbols ? get_address_gdb_debug_symbols($address) :
+	                                   get_address_gdb_no_symbols($address) );
     
-    my $gdb = `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`;
-    #  $1 = (void *) 0xed289000
-    if ($gdb =~ m|\(void \*\) (0x[0-9a-f]*)|)
+    if ($gdb =~ m|\(void \*\) (0x[0-9a-f]*)|)	#  $1 = (void *) 0xed289000
     { 
 	my $peer_address = $1;
 	my $peer_inode = $address_to_inode{$peer_address} || 
 	    die "couldn't map address to inode.\nhardcoded gdb offset is wrong, run find_gdb_offset and fix it !";
-	my $pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid (bug?)";
 	if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
-	return $pid;
+	return $peer_inode;
     }
-    die "failed to parse gdb output (bug?)";
+    die "failed to parse gdb output (bug?)";    
 }
-
 
 
 #######################################################################
@@ -122,12 +92,11 @@ sub find_peer_pid
 {
     my ($inode) = @_;
     $inode_to_pid{$inode} || die("$inode: No process owns this socket. bad number ?\n");
-
-    my $pid = find_peer_pid_hack @_;       return $pid if ($pid);
-    my $pid = find_peer_pid_gdb_hack @_;   return $pid if ($pid);
-#    my $pid = find_peer_pid_gdb @_;        return $pid if ($pid);   # too slow
+    
+    my $peer_inode = find_peer_inode($inode);
+    my $peer_pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid, shouldn't happen.";
+    return $peer_pid;
 }
-
 
 #######################################################################
 

@@ -2,18 +2,12 @@
 Unix Sockets Peers
 ==================
 
-Find which process is connected to a given unix socket:
+Find which process is connected to a given unix socket.
 
-http://stackoverflow.com/questions/11897662/identify-other-end-of-a-unix-domain-socket-connection
+Needed
+------
 
-Note: can't use the inode +1/-1 hack:  
-- sometimes it fails, which is fine (can use other method then)
-- when it succeeds it works most of the time but there are cases where it'll yield wrong socket.
-  -> no way to rely on it.
-
-So use kernel address from lsof output, and get peer address from kernel with gdb.
-
-Needed: perl, gdb, and decent netstat and lsof.  
+perl, gdb, and decent netstat and lsof.  
 You must be root.  
 Kernel debug symbols are not required (see below).  
 This is linux only.  
@@ -41,10 +35,30 @@ Or get info for all processes at once. This one adds an extra column to netstat'
     ...
 
 
-Do without kernel debug symbols
---------------------------------
+Kernel debug symbols
+--------------------
 
-Run find_gdb_offset script to find the right offset to use on your system, fix the scripts and you're good to go.
+To do without debug symbols, run `find_gdb_offset` script to find the right offset to use on your system, fix the scripts and you're good to go. The scripts will catch it if wrong offset is used.
+
+    # find_gdb_offset 6825
+    Offset found, now change hardcoded values in the scripts to:
+      my $struct_unix_sock__peer_offset=104;
+
+
+If you want to use debug symbols (slow), set `$use_kernel_debug_symbols` and change `vmlinux` path.
+
+Details
+-------
+
+Implements ideas from:  
+http://stackoverflow.com/questions/11897662/identify-other-end-of-a-unix-domain-socket-connection
+
+Note: can't use the inode +1/-1 hack:  
+- sometimes it fails, which is fine (can use other method then)
+- when it succeeds it works most of the time but there are cases where it yields wrong socket, so no way to rely on it.
+
+So use kernel address from lsof output, and get peer address from kernel with gdb.
+
 
 TODO
 ----

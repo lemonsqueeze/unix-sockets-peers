@@ -1,15 +1,19 @@
 #!/usr/bin/perl
+# netstat_unix
+# https://github.com/lemonsqueeze/unix_sockets_peers
+#
 # Find socket peer from kernel data structures:
 #    http://stackoverflow.com/questions/11897662/identify-other-end-of-a-unix-domain-socket-connection
 #
 # Note: can't use the inode +1/-1 hack:
-#       - sometimes it fails, which is fine (can use other method then)
-#       - when it succeeds it works most of the time but there are cases where it'll yield wrong socket.
-#         -> no way to rely on it.
+#   - sometimes it fails, which is fine (can use other method then)
+#   - when it succeeds it works most of the time but there are cases where it'll yield wrong socket.
+#     -> no way to rely on it.
 # 
 # So use kernel address from lsof output, and get peer address from kernel with gdb.
 # Then parse netstat output and add extra column.
 #
+# Run find_gdb_offset script to find $struct_unix_sock__peer_offset value.
 
 sub usage
 {    
@@ -57,11 +61,10 @@ sub get_addresses_gdb_debug_symbols
 {
     foreach my $inode (@_)
     {  
-	my $address = $inode_to_address{$inode};
+	my $address = $inode_to_address{$inode} || die "$inode: couldn't map inode to address";
 	$gdb_cmd .= "p (void*)((struct unix_sock*)$address)->peer\n";	# void* cast to make parsing easier
     }
     `echo "$gdb_cmd" > /tmp/gdb_cmd `;
-    
     return split('\n', `gdb $vmlinux /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`);
 }
 
@@ -73,11 +76,10 @@ sub get_addresses_gdb_no_symbols
 {
     foreach my $inode (@_)
     {  
-	my $address = $inode_to_address{$inode};
+	my $address = $inode_to_address{$inode} || die "$inode: couldn't map inode to address";
 	$gdb_cmd .= "p ((void **)$address)[$struct_unix_sock__peer_offset]\n"; 
     }
     `echo "$gdb_cmd" > /tmp/gdb_cmd `;
-    
     return split('\n', `gdb /dev/null /proc/kcore  --batch -x /tmp/gdb_cmd 2>/dev/null`);
 }
 
@@ -112,17 +114,12 @@ sub get_peer_inodes_gdb
     }
 }
 
-# Hack, find the right offset, then you don't need debugging symbols !
-# (see find_gdb_offset script)
-sub find_peer_pid_gdb
+sub find_peer_inode
 { 
     my ($inode) = @_;
     my $peer_inode = $peer_inodes{$inode} || die "couldn't find peer inode, shouldn't happen.";
-    my $pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid, shouldn't happen.";
-#    if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
-    return ($pid, $peer_inode);
+    return $peer_inode;
 }
-
 
 
 #######################################################################
@@ -132,10 +129,11 @@ sub find_peer_pid
     my ($inode) = @_;
     $inode_to_pid{$inode} || die("$inode: No process owns this socket. bad number ?\n");
     
-    my ($peer_pid, $peer_inode) = find_peer_pid_gdb @_;
-    my ($pp_pid, $pp_inode) =     find_peer_pid_gdb($peer_inode);	# double check reverse path
+    my $peer_inode = find_peer_inode($inode);
+    my $pp_inode   = find_peer_inode($peer_inode);	# double check reverse path
     ($pp_inode == $inode) || die "inode $inode: peer's peer != original !";
-    return ($peer_pid, $peer_inode);
+    my $peer_pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid, shouldn't happen.";
+    return $peer_pid;
 }
 
 
@@ -190,7 +188,7 @@ sub show_netstat
 	my $tmp = $str;   $tmp =~ s/  */ /g;
 	my ($z, $z, $z, $z, $z, $z, $inode) = split(' ', $tmp);
 	
-	my ($pid) = find_peer_pid($inode);
+	my $pid = find_peer_pid($inode);
 	my $name = $pid_to_name{$pid};
 	$pid || die "couldn't find peer pid for socket $inode. That's a bug.";
 	$str = insert_column($str, "$pid/$name", $pos);

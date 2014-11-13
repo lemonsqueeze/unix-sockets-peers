@@ -45,20 +45,6 @@ sub init_lsof
 
 #######################################################################
 
-# hack: look for a process owning inode+1 or inode-1
-# works most of the time
-sub find_peer_pid_hack
-{
-    my ($inode) = @_;
-    if ($debug) { print "find_peer_pid_hack($inode)\n"; }    
-    foreach my $pid ($inode_to_pid{$inode + 1}, $inode_to_pid{$inode - 1})
-    {  $pid && return $pid;  }
-    return "";
-}
-
-
-#######################################################################
-
 sub find_gdb_offset
 { 
     my ($inode) = @_;

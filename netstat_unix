@@ -19,11 +19,17 @@ use File::Temp qw/ tempfile /;
 
 sub usage
 {    
-    print "Usage: netstat_unix\n";
-    print "Display which processes unix sockets are connected to.\n";
-    print "Output is same as 'netstat -na --unix -p' with an extra column showing peer pid/process name.\n";
+    print "Usage: netstat_unix [--dump]\n";
+    print "  Display which processes unix sockets are connected to.\n";
+    print "  Output is same as 'netstat -na --unix -p' with an extra column showing peer pid/process name.\n";
+    print "\n";
+    print "  --dump: just dump mappings. Format is:\n";
+    print "          \"name:pid:socket:peer_socket:peer_pid:peer_name\"\n";
     exit 1;
 }
+
+usage() if ($ARGV[0] eq "--help");
+my $want_dump = ($ARGV[0] eq "--dump");
 
 #my $debug = 1;
 #my $use_kernel_debug_symbols = 1;	# slooow
@@ -205,16 +211,33 @@ sub format_netstat
 
 
 #######################################################################
+# dump
+
+my @dump_output;
+sub dump_map
+{
+    foreach my $inode (grep($connected_sockets{$_}, keys(%inode_to_address)))
+    {
+	my $pid = $inode_to_pid{$inode};
+	my $name = $pid_to_name{$pid};   $name =~ s|:||g;
+	my $peer_pid = find_peer_pid($inode) || next;
+	my $peer_inode = $peer_inodes{$inode};
+	my $peer_name = $pid_to_name{$peer_pid};  $peer_name =~ s|:||g;
+	push(@dump_output, "$name:$pid:$inode:$peer_inode:$peer_pid:$peer_name\n");
+    }
+}
+
+#######################################################################
 
 init_lsof();
 init_netstat();
 get_peer_inodes();
-format_netstat();
+($want_dump ? dump_map() : format_netstat());
 
 if ($successful_requests / $total_requests < 0.9)	# more than 10% failed ?
 {  die "Looks like hardcoded gdb offset is wrong, run find_gdb_offset and fix it !";  }
 
-print @netstat;
+print ($want_dump ? @dump_output : @netstat);
 
 if ($successful_requests != $total_requests)
 {  warn sprintf("Warning: couldn't map %s sockets.\n", $total_requests - $successful_requests);  }

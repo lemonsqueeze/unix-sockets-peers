@@ -39,13 +39,24 @@ Or get info for all processes at once. This one adds an extra column to netstat'
     unix  3      [ ]         STREAM     CONNECTED     204666   1523/pulseaudio      3703/thunderbird       
     ...
 
+Use `netstat_unix --dump` to get easy to parse output. Format is:
+
+    name:pid:socket:peer_socket:peer_pid:peer_name
+
+    # ./netstat_unix --dump
+    gconfd-2:1268:5467:5468:1202:gnome-terminal
+    gconfd-2:1268:7852:7850:1541:notification-a
+    notification-a:1541:7834:7835:1235:dbus-daemon
+    Xorg:993:6532:6530:1346:gnome-panel
+
+
 
 Kernel debug symbols
 --------------------
 
 To do without debug symbols, run `find_gdb_offset` script to find the right offset to use on your system, fix the scripts and you're good to go. `netstat_unix` will catch it if wrong offset is used.
 
-    # find_gdb_offset 6825
+    # ./find_gdb_offset 6825
     Offset found, now change hardcoded values in the scripts to:
       my $struct_unix_sock__peer_offset=104;
 

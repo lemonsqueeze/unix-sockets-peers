@@ -43,7 +43,7 @@ Or get info for all processes at once. This one adds an extra column to netstat'
 Kernel debug symbols
 --------------------
 
-To do without debug symbols, run `find_gdb_offset` script to find the right offset to use on your system, fix the scripts and you're good to go. The scripts will catch it if wrong offset is used.
+To do without debug symbols, run `find_gdb_offset` script to find the right offset to use on your system, fix the scripts and you're good to go. `netstat_unix` will catch it if wrong offset is used.
 
     # find_gdb_offset 6825
     Offset found, now change hardcoded values in the scripts to:

@@ -27,6 +27,7 @@ sub usage
 
 #my $debug = 1;
 #my $use_kernel_debug_symbols = 1;	# slooow
+#my $show_warnings = 1;			# show failed lookup warnings (debug)
 
 #######################################################################
 # Use lsof to map pids/sockets/kernel addresses
@@ -37,7 +38,7 @@ my %inode_to_address;
 
 sub init_lsof
 {
-    my @lsof = split('\n', `lsof -U +c 0  2>/dev/null`);
+    my @lsof = split('\n', `lsof -U +c 0  2>/dev/null` || die "couldn't run lsof");
     @lsof = splice(@lsof, 1);   # remove header
     
     # COMMAND    PID       USER   FD   TYPE     DEVICE SIZE/OFF  NODE NAME
@@ -68,7 +69,7 @@ sub get_addresses_gdb_debug_symbols
     }
     my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
     print $fh $gdb_cmd;   close($fh);
-    return split('\n', `gdb $vmlinux /proc/kcore  --batch -x $temp_file 2>/dev/null`);
+    return split('\n', `gdb $vmlinux /proc/kcore  --batch -x $temp_file 2>/dev/null` || die "couldn't run gdb");
 }
 
 # Hack: find the right offset, then you don't need debugging symbols !
@@ -84,14 +85,14 @@ sub get_addresses_gdb_no_symbols
     }
     my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
     print $fh $gdb_cmd;   close($fh);
-    return split('\n', `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null`);
+    return split('\n', `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null` || die "couldn't run gdb");
 }
 
 my %peer_inodes;	# maps inodes to peer inodes
 my %connected_sockets;
 
 # Find all peer addresses using gdb
-sub get_peer_inodes_gdb
+sub get_peer_inodes
 { 
     my $gdb_cmd="";
     my @inodes = grep($connected_sockets{$_}, keys(%inode_to_address));
@@ -106,8 +107,9 @@ sub get_peer_inodes_gdb
 	{
 	    $i++;
 	    my $peer_address = $1;
-	    my $peer_inode = $address_to_inode{$peer_address} || 
-		die "couldn't map address to inode.\nhardcoded gdb offset is wrong, run find_gdb_offset and fix it !";
+	    my $peer_inode = $address_to_inode{$peer_address};
+	    if (!$peer_inode)
+	    {   $show_warnings && warn "$peer_address: couldn't map address to inode";  next;    }
 	    $peer_inodes{$inodes[$i]} = $peer_inode;
 	    if ($debug)
 	    {
@@ -118,26 +120,26 @@ sub get_peer_inodes_gdb
     }
 }
 
-sub find_peer_inode
-{ 
-    my ($inode) = @_;
-    my $peer_inode = $peer_inodes{$inode} || die "couldn't find peer inode, shouldn't happen.";
-    return $peer_inode;
-}
-
 
 #######################################################################
 
+# keep stats
+my $total_requests = 0;
+my $successful_requests = 0;
+
 sub find_peer_pid
 {
-    my ($inode) = @_;
+    my ($inode) = @_;    $total_requests++;
     $inode_to_pid{$inode} || die("$inode: No process owns this socket. bad number ?\n");
     
-    my $peer_inode = find_peer_inode($inode);
-    my $pp_inode   = find_peer_inode($peer_inode);	# double check reverse path
+    my $peer_inode = $peer_inodes{$inode};
+    if (!$peer_inode)
+    { $show_warnings && warn "$inode: couldn't find peer inode.";  return ""; }    
+
+    my $pp_inode   = $peer_inodes{$peer_inode};	# double check reverse path
     ($pp_inode == $inode) || die "inode $inode: peer's peer != original !";
     my $peer_pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid, shouldn't happen.";
-    return $peer_pid;
+    $successful_requests++;   return $peer_pid;
 }
 
 
@@ -147,7 +149,7 @@ sub find_peer_pid
 sub insert_column
 {
     my ($line, $str, $pos) = @_;
-    return sprintf("%s %-25s %s", substr($line, 0, $pos), $str, substr($line, $pos));
+    return sprintf("%s %-25s %s\n", substr($line, 0, $pos), $str, substr($line, $pos));
 }
 
 my %pid_to_name;
@@ -159,7 +161,7 @@ my @netstat;
 # unix  3      [ ]         STREAM     CONNECTED     4229     839/avahi-daemon: r
 sub init_netstat
 {
-    @netstat = split('\n', `netstat -na --unix -p`);
+    @netstat = split('\n', `netstat -na --unix -p` || die "couldn't run netstat");
     
     foreach my $str (@netstat)
     {
@@ -175,7 +177,7 @@ sub init_netstat
 
 
 # Add extra column to netstat output
-sub show_netstat
+sub format_netstat
 {
     # add column before "Path"
     my $header = $netstat[1];
@@ -185,18 +187,19 @@ sub show_netstat
     foreach my $str (@netstat)
     {
 	if ($str eq $header) 
-	{  $str = insert_column($str, "Peer PID/Program name", $pos); print "$str\n";  next;   }
+	{  $str = insert_column($str, "Peer PID/Program name", $pos);  next;   }
 	if (!($str =~ m/ CONNECTED /))
-	{  $str = insert_column($str, "", $pos); print "$str\n";  next;   }
+	{  $str = insert_column($str, "", $pos);  next;   }
 
 	my $tmp = $str;   $tmp =~ s/  */ /g;
 	my ($z, $z, $z, $z, $z, $z, $inode) = split(' ', $tmp);
 	
 	my $pid = find_peer_pid($inode);
 	my $name = $pid_to_name{$pid};
-	$pid || die "couldn't find peer pid for socket $inode. That's a bug.";
-	$str = insert_column($str, "$pid/$name", $pos);
-	print "$str\n";
+	my $extra = "$pid/$name";
+	if (!$pid)
+	{   $show_warnings && warn "couldn't find peer pid for socket $inode.";  $extra = "";	}
+	$str = insert_column($str, $extra, $pos);
     }
 }
 
@@ -205,6 +208,13 @@ sub show_netstat
 
 init_lsof();
 init_netstat();
-get_peer_inodes_gdb();
-show_netstat();
+get_peer_inodes();
+format_netstat();
 
+if ($successful_requests / $total_requests < 0.9)	# more than 10% failed ?
+{  die "Looks like hardcoded gdb offset is wrong, run find_gdb_offset and fix it !";  }
+
+print @netstat;
+
+if ($successful_requests != $total_requests)
+{  warn sprintf("Warning: couldn't map %s sockets.\n", $total_requests - $successful_requests);  }

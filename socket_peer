@@ -26,7 +26,7 @@ my %inode_to_address;
 
 sub init_lsof
 {
-    my @lsof = split('\n', `lsof -U +c 0  2>/dev/null`);
+    my @lsof = split('\n', `lsof -U +c 0  2>/dev/null` || die "couldn't run lsof");
     @lsof = splice(@lsof, 1);   # remove header
     
     # COMMAND    PID       USER   FD   TYPE     DEVICE SIZE/OFF  NODE NAME
@@ -55,7 +55,7 @@ sub get_address_gdb_debug_symbols
     my $gdb_cmd="p (void *)((struct unix_sock*)$address)->peer\n";
     my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
     print $fh $gdb_cmd;   close($fh);
-    return `gdb $vmlinux /proc/kcore  --batch -x $temp_file`;
+    return `gdb $vmlinux /proc/kcore  --batch -x $temp_file` || die "couldn't run gdb";
 }
 
 # Hack, find the right offset, then you don't need debugging symbols !
@@ -67,7 +67,7 @@ sub get_address_gdb_no_symbols
     my $gdb_cmd="p ((void **)$address)[$struct_unix_sock__peer_offset]\n";
     my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
     print $fh $gdb_cmd;   close($fh);
-    return `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null`;
+    return `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null` || die "couldn't run gdb";
 }
 
 sub find_peer_inode
@@ -82,7 +82,8 @@ sub find_peer_inode
     { 
 	my $peer_address = $1;
 	my $peer_inode = $address_to_inode{$peer_address} || 
-	    die "couldn't map address to inode.\nhardcoded gdb offset is wrong, run find_gdb_offset and fix it !";
+	    die ("$peer_address: couldn't map address to inode.\n" . 
+		 "wrong hardcoded gdb offset ? check with find_gdb_offset script.");
 	if ($debug) { print "[ inode $inode -> kernel $address ] --> [ kernel $peer_address -> inode $peer_inode ]\n"; }
 	return $peer_inode;
     }
@@ -98,7 +99,7 @@ sub find_peer_pid
     $inode_to_pid{$inode} || die("$inode: No process owns this socket. bad number ?\n");
     
     my $peer_inode = find_peer_inode($inode);
-    my $peer_pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid, shouldn't happen.";
+    my $peer_pid = $inode_to_pid{$peer_inode} || die "couldn't map inode to pid.";
     return $peer_pid;
 }
 

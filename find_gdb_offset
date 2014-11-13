@@ -26,7 +26,7 @@ my %inode_to_address;
 
 sub init_lsof
 {
-    my @lsof = split('\n', `lsof -U +c 0  2>/dev/null`);
+    my @lsof = split('\n', `lsof -U +c 0  2>/dev/null` || die "couldn't run lsof");
     @lsof = splice(@lsof, 1);   # remove header
     
     # COMMAND    PID       USER   FD   TYPE     DEVICE SIZE/OFF  NODE NAME
@@ -59,7 +59,7 @@ sub find_gdb_offset
     my ($fh, $temp_file) = tempfile("/tmp/netstat_unix.XXXXXXXX", UNLINK => 1);
     print $fh $gdb_cmd;   close($fh);
     
-    my @gdb = split('\n', `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null`);
+    my @gdb = split('\n', `gdb /dev/null /proc/kcore  --batch -x $temp_file 2>/dev/null` || die "couldn't run gdb");
     #  $1 = (void *) 0xed289000
     my $i = 4;
     foreach my $str (@gdb)

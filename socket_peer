@@ -5,6 +5,7 @@
 # Run find_gdb_offset script to find $struct_unix_sock__peer_offset value.
 
 use File::Temp qw/ tempfile /;
+use POSIX;
 
 sub usage
 {    
@@ -12,6 +13,9 @@ sub usage
     print "Usage: socket_peer  socket_inode\n";
     exit 1;
 }
+
+($ARGV[0] eq "--help") && usage();
+(getuid() != 0) && die "must be root.";
 
 #my $debug = 1;
 #my $use_kernel_debug_symbols = 1;	# slooow
@@ -27,7 +31,7 @@ my %inode_to_address;
 sub init_lsof
 {
     my @lsof = split('\n', `lsof -U +c 0  2>/dev/null` || die "couldn't run lsof");
-    @lsof = splice(@lsof, 1);   # remove header
+    shift @lsof;		 # remove header
     
     # COMMAND    PID       USER   FD   TYPE     DEVICE SIZE/OFF  NODE NAME
     # Xorg       982       root   31u  unix 0xed0b4400      0t0  6820 /tmp/.X11-unix/X0

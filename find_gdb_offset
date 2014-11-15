@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
 use File::Temp qw/ tempfile /;
+use POSIX;
 
 sub usage
 {    
@@ -8,6 +9,9 @@ sub usage
     print "Attempt to find offset to use gdb without debug symbols, without debug symbols =)\n";
     exit 1;
 }
+
+($ARGV[0] eq "--help") && usage();
+(getuid() != 0) && die "must be root.";
 
 print "Note: If you have the kernel's debug symbols you don't need this. Just run:\n";
 print "  # gdb /usr/src/linux/vmlinux /proc/kcore\n";
@@ -27,7 +31,7 @@ my %inode_to_address;
 sub init_lsof
 {
     my @lsof = split('\n', `lsof -U +c 0  2>/dev/null` || die "couldn't run lsof");
-    @lsof = splice(@lsof, 1);   # remove header
+    shift @lsof;		# remove header
     
     # COMMAND    PID       USER   FD   TYPE     DEVICE SIZE/OFF  NODE NAME
     # Xorg       982       root   31u  unix 0xed0b4400      0t0  6820 /tmp/.X11-unix/X0
